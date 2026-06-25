@@ -31,4 +31,18 @@ namespace bs {
                         int    max_iter = 100);
     
     BSResult blackScholes(double S, double K, double T, double r, double sigma);
+
+    // inside black_scholes.h, inside namespace bs
+
+    enum class ExerciseType { European, American };
+
+    struct TreeResult {
+        double price;
+        int    steps;
+    };
+
+    TreeResult binomialTree(double S, double K, double T, double r, double sigma,
+                            OptionType    type,
+                            ExerciseType  exercise = ExerciseType::European,
+                            int           steps    = 500);
 }

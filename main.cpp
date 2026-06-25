@@ -115,7 +115,53 @@ static void printSpotSensitivity(double K, double T,
     }
 }
 
+static void binomtest(double K, double T,
+                                 double r, double sigma, double S) {
+                                    std::cout << "\n=== Binomial Tree Convergence to Black-Scholes ===\n";
+std::cout << std::string(60, '=') << "\n";
+
+bs::BSResult bsRef = bs::blackScholes(S, K, T, r, sigma);
+std::cout << "BS reference call: $" << std::fixed
+          << std::setprecision(6) << bsRef.call << "\n\n";
+
+std::cout << std::setw(8)  << "Steps"
+          << std::setw(14) << "Tree (Eur)"
+          << std::setw(14) << "Error"
+          << std::setw(14) << "Tree (Amer)" << "\n";
+std::cout << std::string(50, '-') << "\n";
+
+for (int n : {5, 10, 25, 50, 100, 250, 500, 1000}) {
+    auto eur  = bs::binomialTree(S, K, T, r, sigma,
+                                 bs::OptionType::Call,
+                                 bs::ExerciseType::European, n);
+    auto amer = bs::binomialTree(S, K, T, r, sigma,
+                                 bs::OptionType::Call,
+                                 bs::ExerciseType::American, n);
+
+    std::cout << std::setw(8)  << n
+              << std::setw(14) << eur.price
+              << std::setw(14) << (eur.price - bsRef.call)
+              << std::setw(14) << amer.price << "\n";
+}
+
+// American put — the interesting case
+// For a call on a non-dividend stock, early exercise is never optimal
+// so American call == European call. For puts it differs.
+std::cout << "\n--- American vs European put (early exercise premium) ---\n";
+auto eurPut  = bs::binomialTree(S, K, T, r, sigma,
+                                bs::OptionType::Put,
+                                bs::ExerciseType::European, 500);
+auto amerPut = bs::binomialTree(S, K, T, r, sigma,
+                                bs::OptionType::Put,
+                                bs::ExerciseType::American, 500);
+
+std::cout << "European put : $" << eurPut.price  << "\n";
+std::cout << "American put : $" << amerPut.price << "\n";
+std::cout << "Early exercise premium: $"
+          << (amerPut.price - eurPut.price) << "\n";}
 // ── main ─────────────────────────────────────────────────────────────────────
+
+
 
 int main() {
     // Real AAPL market inputs — June 16 2025
@@ -141,6 +187,7 @@ int main() {
     printMarketComparison(result.call, result.put, mktCall, mktPut);
     checkPutCallParity(result, S, K, T, r, mktCall, mktPut);
     printSpotSensitivity(K, T, r, sigma, S);
+    binomtest(K, T, r, sigma, S);
 
     return 0;
 }

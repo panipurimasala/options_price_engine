@@ -25,6 +25,7 @@ add_compile_options(
 add_library(bs_core STATIC
     functions/black_scholes.cpp
     functions/iv_solver.cpp
+    functions/binomial_tree.cpp
 )
 
 target_include_directories(bs_core PUBLIC ${CMAKE_SOURCE_DIR})
