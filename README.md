@@ -2,28 +2,6 @@
 
 A C++20 options pricing library implementing Black-Scholes with full Greeks and a Newton-Raphson implied volatility solver. Built from scratch — no pricing libraries, no shortcuts.
 
-```
-Black-Scholes Pricer — AAPL $195 strike, Jul 18 2025 expiry
-============================================================
-Inputs: S=$196.45  K=$195.00  T=32d  r=5.33%  σ=22.00%
-
-=== Black-Scholes Prices ===
-  Call price : $5.7423
-  Put  price : $4.2318
-
-=== Put-Call Parity Verification ===
-  Parity RHS  (S - Ke^-rT) : $2.3847
-  Model LHS   (C - P)      : $2.3847
-  Model error : $0.0000000000  ✓ PASS
-
-=== Implied Volatility Solver ===
-  Input sigma       : 0.220000
-  Recovered IV call : 0.220000  (4 iterations)
-  Recovered IV put  : 0.220000  (4 iterations)
-```
-
----
-
 ## What's implemented
 
 **Black-Scholes pricer** — closed-form European option pricing with all five Greeks(delta, gamma, theta, vega, rho and ).
@@ -147,14 +125,26 @@ options-pricer/
 ├── CMakeLists.txt
 ├── include/
 │   └── black_scholes.h    # BSResult, IVResult, OptionType
-├── black_scholes.cpp       # pricer + Greeks
-├── iv_solver.cpp           # Newton-Raphson IV solver
+│   └── binom_tree_pricer.h    # binomial tree
+├── functions/
+│   └── binomial_tree.cpp
+│   └── black_scholes.cpp
+│   └── iv_solver.cpp
+│   └── vol_surface.cpp
+├── vol_surface/
+│   └── fetch_data.py
+│   └── plot_surface.py
 ├── main.cpp                # real AAPL pricing + sensitivity table
 └── tests/
     └── parity_test.cpp     # put-call parity, boundary conditions, Greek signs
 ```
 
 ---
+
+## Binomial tree pricer
+
+
+The binomial tree pricer uses a closed form using different up and down parameters to simulate how the price will be throughout time steps. 
 
 ## Implied Volatility Surface — SPY (June 2025)
 
@@ -164,3 +154,17 @@ The surface shows the volatility smile clearly — implied vol is elevated
 for OTM puts relative to ATM options, reflecting the market's demand for
 downside protection. Black-Scholes assumes a flat surface; the real market
 produces anything but. This is inside the vol_surface file which extrapolates the options chain from yahoo finance as a csv file. 
+
+## Running the Pipeline on Real Data
+
+Follow these steps to fetch market data, compute the implied volatility surface using the C++ engine, and plot the final results.
+
+### Step 1: Build the Project
+Ensure you have built the project using CMake as described in the **Build Instructions** section above.
+
+### Step 2: Fetch Option Chain Data
+Navigate to the `vol_surface` directory and run the data acquisition script. Replace `<ticker_name>` with your desired stock or index ticker (e.g., `SPY`, `AAPL`).
+
+```bash
+cd vol_surface
+python3 fetch_data.py <ticker_name>

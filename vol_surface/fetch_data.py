@@ -1,6 +1,7 @@
 import pandas as pd
 import yfinance as yf
 from datetime import datetime
+import sys
 
 def export_spy_chains_to_csv(ticker="SPY"):
     print(f"Fetching {ticker} market data...")
@@ -50,4 +51,5 @@ def export_spy_chains_to_csv(ticker="SPY"):
     print(f"Successfully dumped {len(master_df)} rows to {ticker}_options_chain.csv!")
 
 if __name__ == "__main__":
-    export_spy_chains_to_csv()
+    ticker = sys.argv[1] if len(sys.argv) > 1 else "SPY"
+    export_spy_chains_to_csv(ticker)
