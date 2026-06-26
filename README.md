@@ -156,6 +156,11 @@ options-pricer/
 
 ---
 
-## What's next
+## Implied Volatility Surface — SPY (June 2025)
 
-Cox-Ross-Rubinstein binomial tree — American option pricing and convergence to Black-Scholes as steps → ∞.
+![SPY Vol Surface](vol_surface.png)
+
+The surface shows the volatility smile clearly — implied vol is elevated
+for OTM puts relative to ATM options, reflecting the market's demand for
+downside protection. Black-Scholes assumes a flat surface; the real market
+produces anything but. This is inside the vol_surface file which extrapolates the options chain from yahoo finance as a csv file. 

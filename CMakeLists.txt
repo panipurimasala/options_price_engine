@@ -40,6 +40,11 @@ target_link_libraries(pricer PRIVATE bs_core)
 add_executable(parity_test tests/parity_test.cpp)
 target_link_libraries(parity_test PRIVATE bs_core)
 
+# --─ vol surface executable ─────────────────────────────────────────────────────
+
+add_executable(vol_surface functions/vol_surface.cpp)
+target_link_libraries(vol_surface PRIVATE bs_core)
+
 # ── CTest integration ─────────────────────────────────────────────────────────
 # Lets you run `ctest` from the build dir. CI pipelines expect this.
 
