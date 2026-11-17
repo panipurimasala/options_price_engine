@@ -1,0 +1,976 @@
+<title>Options Price Engine</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a quote-desk notebook. Narrow header band, then four working sections
+   (pricer, solver, smile, validation), each a two-column "inputs | readout" grid. */
+:root {
+  --bg: #f4f6f9;
+  --surface: #ffffff;
+  --surface-2: #eef1f5;
+  --ink: #0e1726;
+  --ink-2: #4b5466;
+  --muted: #7e8797;
+  --line: #e1e5eb;
+  --axis: #c3c9d3;
+  --accent: #2a78d6;
+  --accent-ink: #1c5cab;
+  --accent-wash: #e3eefb;
+  --s1: #2a78d6;
+  --s2: #eb6834;
+  --s3: #1baf7a;
+  --good: #0ca30c;
+  --good-ink: #006300;
+  --warn: #b27600;
+  --seq-1: #86b6ef; --seq-2: #5598e7; --seq-3: #2a78d6; --seq-4: #1c5cab; --seq-5: #104281; --seq-6: #0d366b;
+  --font-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1218; --surface: #151a22; --surface-2: #1b212b; --ink: #edf0f4; --ink-2: #b4bccb;
+    --muted: #7f8899; --line: #252c37; --axis: #3a4250; --accent: #3987e5; --accent-ink: #86b6ef;
+    --accent-wash: #16263b; --s1: #3987e5; --s2: #d95926; --s3: #199e70; --good: #0ca30c; --good-ink: #3fc13f;
+    --warn: #e0a326;
+    --seq-1: #184f95; --seq-2: #256abf; --seq-3: #3987e5; --seq-4: #6da7ec; --seq-5: #9ec5f4; --seq-6: #cde2fb;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1218; --surface: #151a22; --surface-2: #1b212b; --ink: #edf0f4; --ink-2: #b4bccb;
+  --muted: #7f8899; --line: #252c37; --axis: #3a4250; --accent: #3987e5; --accent-ink: #86b6ef;
+  --accent-wash: #16263b; --s1: #3987e5; --s2: #d95926; --s3: #199e70; --good: #0ca30c; --good-ink: #3fc13f;
+  --warn: #e0a326;
+  --seq-1: #184f95; --seq-2: #256abf; --seq-3: #3987e5; --seq-4: #6da7ec; --seq-5: #9ec5f4; --seq-6: #cde2fb;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--font-body); font-size: 15px; line-height: 1.55;
+}
+.wrap {
+  max-width: 1180px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; letter-spacing: -0.01em; }
+h1 { font-size: clamp(30px, 4.4vw, 46px); font-weight: 700; line-height: 1.05; }
+h2 { font-size: 24px; font-weight: 600; }
+h3 { font-size: 15px; font-weight: 600; }
+p { margin: 0; }
+.mono, .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.eyebrow { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+.lede { color: var(--ink-2); max-width: 64ch; }
+a { color: var(--accent-ink); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+/* header */
+header { padding-block: 40px 20px; }
+.hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; align-items: end; }
+.hero .lede { margin-top: 12px; }
+.formula {
+  font-family: var(--font-mono); font-size: 13px; color: var(--ink-2);
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 12px 14px; line-height: 1.7; white-space: nowrap;
+}
+.formula b { color: var(--ink); font-weight: 500; }
+.engine-note {
+  margin-top: 18px; display: flex; gap: 10px; align-items: flex-start;
+  font-size: 13px; color: var(--ink-2); max-width: 90ch;
+}
+.pill {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px;
+  background: var(--surface); border: 1px solid var(--line); color: var(--ink);
+}
+.pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); }
+.pill.warn .dot { background: var(--warn); }
+
+nav.tabs {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+nav.tabs .wrap { display: flex; gap: 4px; overflow-x: auto; padding-block: 8px; }
+nav.tabs a {
+  text-decoration: none; color: var(--ink-2); font-size: 14px; font-weight: 500;
+  padding: 6px 12px; border-radius: 8px; white-space: nowrap;
+}
+nav.tabs a:hover { background: var(--surface-2); color: var(--ink); }
+
+section { padding-block: 44px 8px; scroll-margin-top: 56px; }
+.section-head { display: grid; gap: 6px; margin-bottom: 20px; }
+
+.grid-2 { display: grid; grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); gap: 20px; align-items: start; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; min-width: 0; }
+.stack { display: grid; gap: 16px; min-width: 0; }
+
+/* inputs */
+.fields { display: grid; gap: 12px; }
+.field { display: grid; gap: 4px; }
+.field label { font-size: 12px; color: var(--ink-2); font-weight: 500; display: flex; justify-content: space-between; }
+.field label .unit { color: var(--muted); font-weight: 400; }
+input[type="number"] {
+  font: inherit; font-family: var(--font-mono); font-size: 14px; color: var(--ink);
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 7px;
+  padding: 7px 9px; width: 100%;
+}
+input[type="number"]:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-wash); }
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.seg { display: inline-grid; grid-auto-flow: column; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 3px; gap: 2px; }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg label { padding: 5px 14px; font-size: 13px; font-weight: 500; border-radius: 6px; cursor: pointer; color: var(--ink-2); }
+.seg input:checked + label { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.seg input:focus-visible + label { outline: 2px solid var(--accent); }
+button {
+  font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+  border-radius: 8px; padding: 7px 12px;
+}
+button:hover { background: var(--surface-2); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary:hover { filter: brightness(1.07); background: var(--accent); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips button[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.hint { font-size: 12px; color: var(--muted); }
+
+/* readouts */
+.readout { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.readout > div { background: var(--surface); padding: 14px 16px; display: grid; gap: 2px; min-width: 0; }
+.readout .k { font-size: 12px; color: var(--ink-2); }
+.readout .v { font-family: var(--font-mono); font-size: 22px; font-weight: 500; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.readout .s { font-size: 12px; color: var(--muted); }
+.readout .hero-v { font-size: 30px; }
+.greeks { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+.greek { display: grid; gap: 1px; padding: 10px 12px; border-radius: 8px; background: var(--surface-2); min-width: 0; }
+.greek .sym { font-family: var(--font-display); font-weight: 600; font-size: 13px; }
+.greek .v { font-family: var(--font-mono); font-size: 15px; font-variant-numeric: tabular-nums; }
+.greek .s { font-size: 11px; color: var(--muted); }
+.parity { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--ink-2); align-items: center; }
+.parity .mono { color: var(--ink); }
+.ok { color: var(--good-ink); font-weight: 600; }
+
+/* charts */
+.charts-2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.chart-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 16px 10px; min-width: 0; }
+.chart-card header { padding: 0; display: grid; gap: 2px; margin-bottom: 8px; }
+.chart-card .sub { font-size: 12px; color: var(--muted); }
+.chart { position: relative; width: 100%; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart text { fill: var(--muted); font-family: var(--font-mono); font-size: 11px; }
+.chart .grid line { stroke: var(--line); }
+.chart .axis line, .chart .axis path { stroke: var(--axis); }
+.chart .ylab, .chart .xlab { fill: var(--ink-2); font-family: var(--font-body); font-size: 11px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--ink-2); margin-top: 6px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+.legend i.dash { background: repeating-linear-gradient(90deg, var(--muted) 0 4px, transparent 4px 7px) !important; }
+.tip {
+  position: absolute; pointer-events: none; z-index: 3; min-width: 140px;
+  background: var(--surface); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 8px; padding: 8px 10px; font-size: 12px; line-height: 1.45;
+  box-shadow: 0 6px 20px rgba(0,0,0,.14);
+}
+.tip .t { font-weight: 600; margin-bottom: 2px; }
+.tip .r { display: flex; justify-content: space-between; gap: 12px; }
+.tip .r span:last-child { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.tip i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+
+/* solver trace */
+.trace-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th { text-align: left; font-weight: 500; color: var(--ink-2); font-size: 12px; padding: 6px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: 6px 10px; border-bottom: 1px solid var(--line); font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.l, th.l { font-family: var(--font-body); }
+th.r, td.r { text-align: right; }
+.tag { font-family: var(--font-body); font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; background: var(--accent-wash); color: var(--accent-ink); }
+.tag.bis { background: color-mix(in srgb, var(--s2) 16%, transparent); color: var(--s2); }
+.tag.conv { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good-ink); }
+
+/* validation */
+.banner {
+  display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: var(--radius);
+  background: color-mix(in srgb, var(--warn) 10%, var(--surface)); border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--line));
+  font-size: 13px; color: var(--ink-2); margin-bottom: 16px;
+}
+.banner b { color: var(--ink); }
+.tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; display: grid; gap: 2px; min-width: 0; }
+.tile .v { font-family: var(--font-display); font-size: 30px; font-weight: 600; line-height: 1.1; }
+.tile .k { font-size: 13px; color: var(--ink-2); }
+.tile .s { font-size: 12px; color: var(--muted); }
+.claims { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.claim { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.claim .big { font-family: var(--font-mono); font-size: 24px; font-weight: 500; }
+.claim p { font-size: 13px; color: var(--ink-2); }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 13px; }
+.kv dt { color: var(--ink-2); }
+.kv dd { margin: 0; text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.study-table td:first-child { font-family: var(--font-body); }
+.swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; margin-right: 8px; vertical-align: -1px; }
+.contracts { max-height: 340px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.contracts thead th { position: sticky; top: 0; background: var(--surface); }
+details summary { cursor: pointer; font-weight: 600; font-size: 14px; padding-block: 6px; }
+pre.cmd {
+  font-family: var(--font-mono); font-size: 12.5px; background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 14px; overflow-x: auto; color: var(--ink); line-height: 1.6; margin: 0;
+}
+pre.cmd .c { color: var(--muted); }
+footer { padding-block: 48px 56px; color: var(--muted); font-size: 13px; }
+
+@media (max-width: 900px) {
+  .grid-2, .charts-2, .claims { grid-template-columns: minmax(0, 1fr); }
+  .hero { grid-template-columns: minmax(0, 1fr); }
+  .formula { white-space: normal; }
+  .greeks { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .tiles, .readout { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 460px) {
+  .greeks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
+html { scroll-behavior: smooth; }
+</style>
+
+<header>
+  <div class="wrap">
+    <div class="hero">
+      <div>
+        <div class="eyebrow">C++20 · no pricing libraries</div>
+        <h1>Options Price Engine</h1>
+        <p class="lede">Black-Scholes closed form with full Greeks, a Cox-Ross-Rubinstein binomial tree for European and American exercise, and a safeguarded Newton-Raphson implied-volatility solver. Price an option, watch the solver work, and inspect the validation against an independent reference library.</p>
+      </div>
+      <div class="formula" aria-label="Model summary">
+        <b>d₁</b> = [ln(S/K) + (r + σ²/2)T] / σ√T<br>
+        <b>C</b> = S·N(d₁) − K·e<sup>−rT</sup>·N(d₂)<br>
+        <b>CRR</b>: u = e<sup>σ√Δt</sup>, d = 1/u
+      </div>
+    </div>
+    <div class="engine-note">
+      <span class="pill" id="engine-pill"><span class="dot"></span>Engine verified</span>
+      <span>This page runs a line-for-line JavaScript port of the C++ engine. Checked against the compiled C++: prices and Greeks agree within 2.3e-13 on 960 inputs, trees within 1.4e-14, and the IV solver takes the identical number of iterations on all 3,537 test solves.</span>
+    </div>
+  </div>
+</header>
+
+<nav class="tabs" aria-label="Sections">
+  <div class="wrap">
+    <a href="#pricer">Pricer</a>
+    <a href="#solver">Implied vol</a>
+    <a href="#smile">Volatility smile</a>
+    <a href="#validation">Validation</a>
+    <a href="#reproduce">Reproduce</a>
+  </div>
+</nav>
+
+<main>
+<!-- ───────────────────────── PRICER ───────────────────────── -->
+<section id="pricer">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="eyebrow">Pricer</div>
+      <h2>Price, Greeks and the binomial tree</h2>
+    </div>
+    <div class="grid-2">
+      <form class="panel fields" id="pricer-form" autocomplete="off">
+        <div class="seg" role="radiogroup" aria-label="Option type">
+          <input type="radio" name="otype" id="t-call" value="C" checked><label for="t-call">Call</label>
+          <input type="radio" name="otype" id="t-put" value="P"><label for="t-put">Put</label>
+        </div>
+        <div class="row2">
+          <div class="field"><label for="in-S">Spot <span class="unit">S</span></label><input type="number" id="in-S" value="100" step="1" min="0.01"></div>
+          <div class="field"><label for="in-K">Strike <span class="unit">K</span></label><input type="number" id="in-K" value="105" step="1" min="0.01"></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label for="in-days">Expiry <span class="unit">days</span></label><input type="number" id="in-days" value="90" step="1" min="1"></div>
+          <div class="field"><label for="in-r">Rate <span class="unit">% cont.</span></label><input type="number" id="in-r" value="4.12" step="0.05"></div>
+        </div>
+        <div class="field">
+          <label for="in-vol">Volatility σ <span class="unit mono" id="vol-out">25.0%</span></label>
+          <input type="range" id="in-vol" min="1" max="150" step="0.5" value="25">
+        </div>
+        <div class="field">
+          <label for="in-steps">Tree steps <span class="unit mono" id="steps-out">200</span></label>
+          <input type="range" id="in-steps" min="10" max="1000" step="10" value="200">
+        </div>
+        <p class="hint">T = days / 365, the same day count as the validation harness.</p>
+        <p class="hint" id="pricer-error" role="alert" hidden></p>
+      </form>
+
+      <div class="stack">
+        <div class="readout">
+          <div><span class="k">Black-Scholes</span><span class="v hero-v" id="o-bs">–</span><span class="s">closed form</span></div>
+          <div><span class="k">CRR tree, European</span><span class="v" id="o-eu">–</span><span class="s" id="o-eu-s">–</span></div>
+          <div><span class="k">CRR tree, American</span><span class="v" id="o-am">–</span><span class="s">early exercise allowed</span></div>
+          <div><span class="k">Early-exercise premium</span><span class="v" id="o-prem">–</span><span class="s">American − European</span></div>
+        </div>
+        <div class="greeks" aria-label="Greeks">
+          <div class="greek"><span class="sym">Δ Delta</span><span class="v" id="g-delta">–</span><span class="s">∂V/∂S</span></div>
+          <div class="greek"><span class="sym">Γ Gamma</span><span class="v" id="g-gamma">–</span><span class="s">∂²V/∂S²</span></div>
+          <div class="greek"><span class="sym">Θ Theta</span><span class="v" id="g-theta">–</span><span class="s">per calendar day</span></div>
+          <div class="greek"><span class="sym">ν Vega</span><span class="v" id="g-vega">–</span><span class="s">per 1 vol point</span></div>
+          <div class="greek"><span class="sym">ρ Rho</span><span class="v" id="g-rho">–</span><span class="s">per 1% rate</span></div>
+        </div>
+        <div class="parity">
+          <span>Put-call parity</span>
+          <span>C − P = <span class="mono" id="p-lhs">–</span></span>
+          <span>S − K·e<sup>−rT</sup> = <span class="mono" id="p-rhs">–</span></span>
+          <span>residual <span class="mono" id="p-res">–</span></span>
+        </div>
+        <div class="charts-2">
+          <div class="chart-card">
+            <header><h3>Value across spot</h3><span class="sub">Today's Black-Scholes value against the payoff at expiry</span></header>
+            <div class="chart" id="chart-spot"></div>
+            <div class="legend"><span><i style="background:var(--s1)"></i>Value today</span><span><i class="dash"></i>Payoff at expiry</span></div>
+          </div>
+          <div class="chart-card">
+            <header><h3>Tree convergence</h3><span class="sub">European CRR price by step count, against the closed form</span></header>
+            <div class="chart" id="chart-conv"></div>
+            <div class="legend"><span><i style="background:var(--s1)"></i>CRR tree</span><span><i class="dash"></i>Black-Scholes</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── SOLVER ───────────────────────── -->
+<section id="solver">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="eyebrow">Implied volatility</div>
+      <h2>Watch the solver converge</h2>
+      <p class="lede">Enter a market price and the solver finds the σ that reproduces it, stopping when the model price is within $0.000001. Each row is one evaluation. When a Newton step would leave the bracket known to contain the answer, the solver bisects instead, which is what keeps it from failing on out-of-the-money options.</p>
+    </div>
+    <div class="grid-2">
+      <form class="panel fields" id="iv-form" autocomplete="off">
+        <div class="field"><label for="iv-price">Market price <span class="unit">$</span></label><input type="number" id="iv-price" step="0.01" min="0.0001" value="3.50"></div>
+        <p class="hint">Uses spot, strike, expiry, rate and type from the pricer above.</p>
+        <div class="chips">
+          <button type="button" id="ex-atm">Example: at the money</button>
+          <button type="button" id="ex-otm">Example: OTM short-dated</button>
+        </div>
+        <p class="hint">The OTM example is a real SPY contract from the sample data: 8 days out, strike 768 with spot at 754.37, mid $1.345. Before the bracketing fix this one failed.</p>
+      </form>
+      <div class="stack">
+        <div class="readout">
+          <div><span class="k">Implied volatility</span><span class="v hero-v" id="iv-out">–</span><span class="s" id="iv-out-s">–</span></div>
+          <div><span class="k">Evaluations</span><span class="v" id="iv-iters">–</span><span class="s" id="iv-iters-s">–</span></div>
+          <div><span class="k">Starting guess</span><span class="v" id="iv-seed">–</span><span class="s" id="iv-seed-s">Brenner-Subrahmanyam</span></div>
+          <div><span class="k">Final price error</span><span class="v" id="iv-err">–</span><span class="s">tolerance 1e-6</span></div>
+        </div>
+        <div class="panel trace-wrap">
+          <table aria-label="Solver iterations">
+            <thead><tr><th>#</th><th class="r">σ tried</th><th class="r">price − market</th><th class="r">bracket low</th><th class="r">bracket high</th><th class="l">next step</th></tr></thead>
+            <tbody id="trace-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── SMILE ───────────────────────── -->
+<section id="smile">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="eyebrow">Volatility smile</div>
+      <h2>Implied vol solved from real option chains</h2>
+      <p class="lede">Each point is the engine's implied vol for one out-of-the-money contract: puts below spot, calls above. Constant-volatility Black-Scholes would draw a flat line. The curve is the smile, and it is exactly why the model does not "match market prices" with a single σ.</p>
+    </div>
+    <div class="chips" id="ticker-chips" role="group" aria-label="Ticker"></div>
+    <div class="chart-card" style="margin-top:12px">
+      <header><h3 id="smile-title">–</h3><span class="sub" id="smile-sub">–</span></header>
+      <div class="chart" id="chart-smile"></div>
+      <div class="legend" id="smile-legend"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── VALIDATION ───────────────────────── -->
+<section id="validation">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="eyebrow">Validation</div>
+      <h2>Does the engine give the right answer?</h2>
+      <p class="lede">The test that matters is agreement with an independent implementation on identical inputs. For every contract, the engine's IV is fed to <span class="mono">py_vollib</span>, and the two prices are compared. Round-trip error alone would miss a bug shared by the pricer and solver.</p>
+    </div>
+    <div class="banner" id="data-banner"><span class="pill warn"><span class="dot"></span>Data</span><span id="data-label">–</span></div>
+    <div class="tiles">
+      <div class="tile"><span class="v" id="t-contracts">–</span><span class="k">contracts solved</span><span class="s" id="t-contracts-s">–</span></div>
+      <div class="tile"><span class="v" id="t-tickers">–</span><span class="k">tickers</span><span class="s" id="t-tickers-s">–</span></div>
+      <div class="tile"><span class="v" id="t-exp">–</span><span class="k">ticker-expiries</span><span class="s" id="t-exp-s">–</span></div>
+      <div class="tile"><span class="v" id="t-strikes">–</span><span class="k">ticker-expiry-strikes</span><span class="s">distinct (ticker, expiry, strike)</span></div>
+    </div>
+    <div class="claims">
+      <div class="claim">
+        <span class="eyebrow">vs py_vollib, price</span>
+        <span class="big" id="c-max">–</span>
+        <dl class="kv"><dt>max |diff|</dt><dd id="c-max2">–</dd><dt>p99</dt><dd id="c-p99">–</dd><dt>median</dt><dd id="c-med">–</dd></dl>
+        <p>Same inputs, same σ, two independent implementations. Above 1e-6 would point to a convention mismatch.</p>
+      </div>
+      <div class="claim">
+        <span class="eyebrow">vs py_vollib, implied vol</span>
+        <span class="big" id="c-ivmax">–</span>
+        <dl class="kv"><dt>max |diff|</dt><dd id="c-ivmax2">–</dd><dt>median</dt><dd id="c-ivmed">–</dd><dt>solved by both</dt><dd id="c-ivn">–</dd></dl>
+        <p>py_vollib solves with Jäckel's "Let's Be Rational" method; the engine with bracketed Newton. Both land in the same place.</p>
+      </div>
+      <div class="claim">
+        <span class="eyebrow">Unit tests</span>
+        <span class="big" id="c-tests">–</span>
+        <dl class="kv"><dt>put-call parity cases</dt><dd id="c-pcases">–</dd><dt>parity tolerance</dt><dd id="c-ptol">–</dd><dt>suite</dt><dd>tests/parity_test.cpp</dd></dl>
+        <p>Parity, no-arbitrage bounds, Greek signs, input validation and IV recovery on synthetic inputs.</p>
+      </div>
+    </div>
+    <div class="charts-2">
+      <div class="chart-card">
+        <header><h3>Price disagreement per contract</h3><span class="sub">Count of contracts by |engine − py_vollib|, log scale</span></header>
+        <div class="chart" id="chart-agree"></div>
+      </div>
+      <div class="chart-card">
+        <header><h3>Solver iterations by starting guess</h3><span class="sub" id="study-sub">Re-run live in your browser on every contract</span></header>
+        <div class="chart" id="chart-iters"></div>
+        <div class="legend" id="iters-legend"></div>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <div style="display:flex; flex-wrap:wrap; justify-content:space-between; gap:10px; align-items:center; margin-bottom:8px">
+        <h3>Iteration study</h3>
+        <button type="button" id="rerun">Re-run solver on all contracts</button>
+      </div>
+      <div class="trace-wrap">
+        <table class="study-table">
+          <thead><tr><th class="l">Starting guess</th><th class="r">converged</th><th class="r">median</th><th class="r">p95</th><th class="r">max</th><th class="r">mean</th><th class="r">under 5</th></tr></thead>
+          <tbody id="study-body"></tbody>
+        </table>
+      </div>
+      <p class="hint" style="margin-top:8px">Counts are model evaluations including the final convergence check, so 4 evaluations means 3 Newton updates. Brenner-Subrahmanyam is the engine's default; the other two rows only change the starting σ.</p>
+    </div>
+    <details class="panel" style="margin-top:16px">
+      <summary>All contracts</summary>
+      <div class="chips" id="table-chips" style="margin-block:10px" role="group" aria-label="Filter contracts by ticker"></div>
+      <div class="contracts">
+        <table aria-label="Contracts">
+          <thead><tr><th class="l">Ticker</th><th class="l">Expiry</th><th class="l">Type</th><th class="r">Spot</th><th class="r">Strike</th><th class="r">Bid</th><th class="r">Ask</th><th class="r">Mid</th><th class="r">Engine IV</th><th class="r">|Δ price| vs vollib</th></tr></thead>
+          <tbody id="contracts-body"></tbody>
+        </table>
+      </div>
+    </details>
+  </div>
+</section>
+
+<section id="reproduce">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="eyebrow">Reproduce</div>
+      <h2>Run it yourself</h2>
+      <p class="lede">Fetch chains during US market hours, run the C++ engine over them, compare against py_vollib, then rebuild this page's data.</p>
+    </div>
+<pre class="cmd"><span class="c"># build the engine and run the unit tests</span>
+cmake -S . -B build &amp;&amp; cmake --build build
+./build/parity_test
+
+<span class="c"># validation pipeline (weekdays, 9:30–16:00 ET)</span>
+python vol_surface/fetch_validation_data.py
+./build/market_validation validation_data.csv engine_output.csv
+python vol_surface/compare_reference.py engine_output.csv
+
+<span class="c"># refresh this page's data</span>
+python web/build_data.py validation_data.csv engine_output.csv --label "Live run, &lt;date&gt; &lt;time&gt; ET"
+
+<span class="c"># re-verify the JavaScript port against the C++ build</span>
+c++ -std=c++20 -O2 -Iinclude web/verify_port.cpp build/libbs_core.a -o build/verify_port
+./build/verify_port validation_data.csv &gt; build/port_vectors.jsonl
+node web/verify_port.mjs build/port_vectors.jsonl</pre>
+  </div>
+</section>
+</main>
+
+<footer><div class="wrap">Options Price Engine · Black-Scholes, CRR binomial tree and implied-vol solver written from scratch in C++20.</div></footer>
+
+<script src="engine.js"></script>
+<script src="data.js"></script>
+<script>
+(function () {
+  'use strict';
+  const E = window.Engine;
+  const D = window.VALIDATION;
+  const $ = (id) => document.getElementById(id);
+  const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const NS = 'http://www.w3.org/2000/svg';
+
+  // ── formatting ───────────────────────────────────────────────────────
+  const money = (x, d = 4) => (x < 0 ? '−' : '') + '$' + Math.abs(x).toFixed(d);
+  const fixed = (x, d) => (x < 0 ? '−' : '') + Math.abs(x).toFixed(d);
+  const sci = (x, d = 1) => {
+    if (x === 0) return '0';
+    const [m, e] = x.toExponential(d).split('e');
+    return m + 'e' + (+e);
+  };
+  const pct = (x, d = 1) => (x * 100).toFixed(d) + '%';
+  const int = (n) => n.toLocaleString('en-US');
+
+  // ── tiny SVG chart kit ───────────────────────────────────────────────
+  function el(tag, attrs, parent) {
+    const n = document.createElementNS(NS, tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(n);
+    return n;
+  }
+  function niceTicks(lo, hi, n) {
+    const span = hi - lo || 1;
+    const step0 = span / n;
+    const mag = Math.pow(10, Math.floor(Math.log10(step0)));
+    const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => span / s <= n) || 10 * mag;
+    const out = [];
+    for (let v = Math.ceil(lo / step) * step; v <= hi + step * 1e-9; v += step) out.push(+v.toFixed(10));
+    return out;
+  }
+
+  // frame(): axes + grid; returns scales and the svg.
+  function frame(container, opt) {
+    container.innerHTML = '';
+    const W = opt.width || 560, H = opt.height || 260;
+    const m = Object.assign({ t: 12, r: 16, b: 38, l: 52 }, opt.margin || {});
+    const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': opt.label || '' }, container);
+    const x = (v) => m.l + (v - opt.x[0]) / (opt.x[1] - opt.x[0]) * (W - m.l - m.r);
+    const y = (v) => H - m.b - (v - opt.y[0]) / (opt.y[1] - opt.y[0]) * (H - m.t - m.b);
+    const g = el('g', { class: 'grid' }, svg);
+    const ax = el('g', { class: 'axis' }, svg);
+    (opt.yTicks || niceTicks(opt.y[0], opt.y[1], 5)).forEach((v) => {
+      el('line', { x1: m.l, x2: W - m.r, y1: y(v), y2: y(v), 'stroke-width': 1 }, g);
+      const t = el('text', { x: m.l - 8, y: y(v) + 4, 'text-anchor': 'end' }, svg);
+      t.textContent = opt.yFmt ? opt.yFmt(v) : v;
+    });
+    el('line', { x1: m.l, x2: W - m.r, y1: H - m.b, y2: H - m.b, 'stroke-width': 1 }, ax);
+    (opt.xTicks || niceTicks(opt.x[0], opt.x[1], 6)).forEach((v) => {
+      el('line', { x1: x(v), x2: x(v), y1: H - m.b, y2: H - m.b + 4, 'stroke-width': 1 }, ax);
+      const t = el('text', { x: x(v), y: H - m.b + 17, 'text-anchor': 'middle' }, svg);
+      t.textContent = opt.xFmt ? opt.xFmt(v) : v;
+    });
+    if (opt.xLabel) { const t = el('text', { x: (m.l + W - m.r) / 2, y: H - 4, 'text-anchor': 'middle', class: 'xlab' }, svg); t.textContent = opt.xLabel; }
+    if (opt.yLabel) { const t = el('text', { x: 12, y: m.t + (H - m.t - m.b) / 2, 'text-anchor': 'middle', class: 'ylab', transform: `rotate(-90 12 ${m.t + (H - m.t - m.b) / 2})` }, svg); t.textContent = opt.yLabel; }
+    return { svg, x, y, W, H, m };
+  }
+  function path(points, f) {
+    let d = '';
+    for (const [a, b] of points) {
+      if (!isFinite(b)) continue;
+      d += (d ? 'L' : 'M') + f.x(a).toFixed(2) + ',' + f.y(b).toFixed(2);
+    }
+    return d;
+  }
+  function tooltip(container) {
+    let tip = container.querySelector('.tip');
+    if (!tip) { tip = document.createElement('div'); tip.className = 'tip'; tip.hidden = true; container.appendChild(tip); }
+    return {
+      show(html, px, py) {
+        tip.innerHTML = html; tip.hidden = false;
+        const cw = container.clientWidth, tw = tip.offsetWidth;
+        let left = px + 14; if (left + tw > cw) left = Math.max(0, px - tw - 14);
+        tip.style.left = left + 'px'; tip.style.top = Math.max(0, py - 10) + 'px';
+      },
+      hide() { tip.hidden = true; },
+    };
+  }
+  // Pointer -> svg coordinates
+  function svgPoint(svg, ev) {
+    const r = svg.getBoundingClientRect();
+    const vb = svg.viewBox.baseVal;
+    return { x: (ev.clientX - r.left) / r.width * vb.width, y: (ev.clientY - r.top) / r.height * vb.height,
+             px: ev.clientX - r.left, py: ev.clientY - r.top };
+  }
+
+  // Line chart with x-crosshair over shared x samples.
+  function lineChart(container, opt) {
+    const f = frame(container, opt);
+    const lines = opt.series.map((s) => {
+      const p = el('path', { d: path(s.points, f), fill: 'none', stroke: s.color, 'stroke-width': 2,
+        'stroke-linejoin': 'round', 'stroke-linecap': 'round', 'stroke-dasharray': s.dash ? '5 4' : 'none' }, f.svg);
+      return p;
+    });
+    (opt.markers || []).forEach((mk) => {
+      el('circle', { cx: f.x(mk.x), cy: f.y(mk.y), r: 4.5, fill: css('--s1'), stroke: css('--surface'), 'stroke-width': 2 }, f.svg);
+    });
+    const cross = el('line', { y1: f.m.t, y2: f.H - f.m.b, stroke: css('--axis'), 'stroke-width': 1, visibility: 'hidden' }, f.svg);
+    const dots = opt.series.map((s) => el('circle', { r: 4, fill: s.dash ? css('--muted') : s.color, stroke: css('--surface'), 'stroke-width': 2, visibility: 'hidden' }, f.svg));
+    const tip = tooltip(container);
+    const hit = el('rect', { x: f.m.l, y: f.m.t, width: f.W - f.m.l - f.m.r, height: f.H - f.m.t - f.m.b, fill: 'transparent' }, f.svg);
+    const xs = opt.series[0].points.map((p) => p[0]);
+    function move(ev) {
+      const pt = svgPoint(f.svg, ev);
+      const xv = opt.x[0] + (pt.x - f.m.l) / (f.W - f.m.l - f.m.r) * (opt.x[1] - opt.x[0]);
+      let i = 0, best = Infinity;
+      xs.forEach((v, k) => { const d = Math.abs(v - xv); if (d < best) { best = d; i = k; } });
+      const X = xs[i];
+      cross.setAttribute('x1', f.x(X)); cross.setAttribute('x2', f.x(X)); cross.setAttribute('visibility', 'visible');
+      let rows = '';
+      opt.series.forEach((s, k) => {
+        const v = s.points[i] && s.points[i][1];
+        if (!isFinite(v)) { dots[k].setAttribute('visibility', 'hidden'); return; }
+        dots[k].setAttribute('cx', f.x(X)); dots[k].setAttribute('cy', f.y(v)); dots[k].setAttribute('visibility', 'visible');
+        rows += `<div class="r"><span><i style="background:${s.dash ? css('--muted') : s.color}"></i>${s.name}</span><span>${opt.vFmt(v)}</span></div>`;
+      });
+      tip.show(`<div class="t">${opt.tipTitle(X)}</div>${rows}`, pt.px, pt.py);
+    }
+    function leave() { cross.setAttribute('visibility', 'hidden'); dots.forEach((d) => d.setAttribute('visibility', 'hidden')); tip.hide(); }
+    hit.addEventListener('pointermove', move);
+    hit.addEventListener('pointerdown', move);
+    hit.addEventListener('pointerleave', leave);
+    return f;
+  }
+
+  // ── PRICER ───────────────────────────────────────────────────────────
+  const inputs = ['in-S', 'in-K', 'in-days', 'in-r', 'in-vol', 'in-steps'].map($);
+  function readInputs() {
+    return {
+      type: $('t-put').checked ? 'P' : 'C',
+      S: +$('in-S').value, K: +$('in-K').value, days: +$('in-days').value,
+      r: +$('in-r').value / 100, sigma: +$('in-vol').value / 100, steps: +$('in-steps').value,
+    };
+  }
+  let raf = 0;
+  function schedule() { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => { renderPricer(); renderSolver(); }); }
+
+  function renderPricer() {
+    const p = readInputs();
+    $('vol-out').textContent = pct(p.sigma);
+    $('steps-out').textContent = p.steps;
+    const T = p.days / 365;
+    const errBox = $('pricer-error');
+    let bs, eu, am;
+    try {
+      bs = E.blackScholes(p.S, p.K, T, p.r, p.sigma);
+      eu = E.binomialTree(p.S, p.K, T, p.r, p.sigma, p.type, false, p.steps).price;
+      am = E.binomialTree(p.S, p.K, T, p.r, p.sigma, p.type, true, p.steps).price;
+      errBox.hidden = true;
+    } catch (e) {
+      errBox.textContent = e.message + '. Spot, strike, expiry and volatility must all be above zero.';
+      errBox.hidden = false;
+      return;
+    }
+    const isC = p.type === 'C';
+    const price = isC ? bs.call : bs.put;
+    $('o-bs').textContent = money(price);
+    $('o-eu').textContent = money(eu);
+    $('o-eu-s').textContent = 'diff vs closed form ' + sci(Math.abs(eu - price), 1);
+    $('o-am').textContent = money(am);
+    $('o-prem').textContent = money(am - eu);
+    $('g-delta').textContent = fixed(isC ? bs.delta_call : bs.delta_put, 4);
+    $('g-gamma').textContent = fixed(bs.gamma, 5);
+    $('g-theta').textContent = money(isC ? bs.theta_call : bs.theta_put, 4);
+    $('g-vega').textContent = money(bs.vega, 4);
+    $('g-rho').textContent = money(isC ? bs.rho_call : bs.rho_put, 4);
+    const lhs = bs.call - bs.put, rhs = p.S - p.K * Math.exp(-p.r * T);
+    $('p-lhs').textContent = money(lhs);
+    $('p-rhs').textContent = money(rhs);
+    const res = Math.abs(lhs - rhs);
+    $('p-res').innerHTML = sci(res, 1) + (res < 1e-10 ? ' <span class="ok">✓ within 1e-10</span>' : '');
+
+    // value across spot
+    const lo = p.K * 0.6, hi = p.K * 1.4, pts = [], pay = [];
+    for (let i = 0; i <= 120; i++) {
+      const s = lo + (hi - lo) * i / 120;
+      const b = E.blackScholes(s, p.K, T, p.r, p.sigma);
+      pts.push([s, isC ? b.call : b.put]);
+      pay.push([s, isC ? Math.max(s - p.K, 0) : Math.max(p.K - s, 0)]);
+    }
+    const ymax = Math.max(...pts.map((q) => q[1]), ...pay.map((q) => q[1])) * 1.05 || 1;
+    lineChart($('chart-spot'), {
+      label: 'Option value across spot', x: [lo, hi], y: [0, ymax], xLabel: 'Spot', yLabel: 'Value ($)',
+      xFmt: (v) => v.toFixed(0), yFmt: (v) => v.toFixed(v < 10 ? 1 : 0),
+      series: [{ name: 'Value today', color: css('--s1'), points: pts }, { name: 'Payoff at expiry', dash: true, color: css('--muted'), points: pay }],
+      markers: p.S >= lo && p.S <= hi ? [{ x: p.S, y: price }] : [],
+      tipTitle: (x) => 'Spot ' + x.toFixed(2), vFmt: (v) => money(v, 3),
+    });
+
+    // convergence
+    const conv = [], ref = [];
+    for (let n = 2; n <= 300; n += 2) {
+      let v = NaN;
+      try { v = E.binomialTree(p.S, p.K, T, p.r, p.sigma, p.type, false, n).price; } catch (_) { /* p outside (0,1) */ }
+      conv.push([n, v]); ref.push([n, price]);
+    }
+    const tail = conv.filter((q) => q[0] >= 20 && isFinite(q[1])).map((q) => q[1]);
+    const spread = Math.max(Math.max(...tail) - price, price - Math.min(...tail), price * 0.002, 1e-4);
+    lineChart($('chart-conv'), {
+      label: 'Tree convergence', x: [2, 300], y: [price - spread * 1.3, price + spread * 1.3], xLabel: 'Tree steps', yLabel: 'Price ($)',
+      xTicks: [2, 50, 100, 150, 200, 250, 300], yFmt: (v) => v.toFixed(spread < 0.01 ? 4 : spread < 0.1 ? 3 : 2),
+      margin: { l: 64 },
+      series: [{ name: 'CRR tree', color: css('--s1'), points: conv }, { name: 'Black-Scholes', dash: true, color: css('--muted'), points: ref }],
+      tipTitle: (x) => x + ' steps', vFmt: (v) => money(v, 5),
+    });
+  }
+
+  // ── SOLVER ───────────────────────────────────────────────────────────
+  function renderSolver() {
+    const p = readInputs();
+    const T = p.days / 365, mkt = +$('iv-price').value;
+    const body = $('trace-body');
+    let res;
+    try {
+      res = E.impliedVol(mkt, p.S, p.K, T, p.r, p.type, { trace: true });
+    } catch (e) {
+      $('iv-out').textContent = '–'; $('iv-out-s').textContent = e.message;
+      ['iv-iters', 'iv-seed', 'iv-err'].forEach((id) => { $(id).textContent = '–'; });
+      $('iv-iters-s').textContent = '';
+      body.innerHTML = `<tr><td class="l" colspan="6">No solution: ${e.message}. Check the price against the spot, strike and rate above.</td></tr>`;
+      return;
+    }
+    const seed = res.path[0].sigma;
+    const bsSeed = E.brennerSubrahmanyam(mkt, p.S, T);
+    $('iv-out').textContent = res.converged ? pct(res.iv, 3) : 'not converged';
+    $('iv-out-s').textContent = res.converged ? 'σ = ' + res.iv.toFixed(8) : 'hit the iteration limit';
+    $('iv-iters').textContent = res.iterations;
+    const nb = res.path.filter((r) => r.step === 'bisect').length;
+    $('iv-iters-s').textContent = nb ? `${res.iterations - 1 - nb} Newton, ${nb} bisection` : `${res.iterations - 1} Newton updates`;
+    $('iv-seed').textContent = pct(seed, 2);
+    $('iv-seed-s').textContent = (bsSeed < 0.005 || bsSeed > 5) ? 'Corrado-Miller fallback' : 'Brenner-Subrahmanyam';
+    $('iv-err').textContent = sci(Math.abs(res.path[res.path.length - 1].error), 1);
+    body.innerHTML = res.path.map((r, i) => {
+      const last = i === res.path.length - 1 && res.converged;
+      const tag = last ? '<span class="tag conv">converged</span>' : r.step === 'bisect' ? '<span class="tag bis">bisect</span>' : '<span class="tag">Newton</span>';
+      return `<tr><td>${i + 1}</td><td class="r">${r.sigma.toFixed(8)}</td><td class="r">${r.error >= 0 ? '+' : '−'}${Math.abs(r.error).toExponential(3)}</td><td class="r">${r.lo.toFixed(5)}</td><td class="r">${r.hi.toFixed(5)}</td><td class="l">${tag}</td></tr>`;
+    }).join('');
+  }
+  function setPricer(v) {
+    $(v.type === 'P' ? 't-put' : 't-call').checked = true;
+    $('in-S').value = v.S; $('in-K').value = v.K; $('in-days').value = v.days; $('in-r').value = v.r;
+    if (v.vol) $('in-vol').value = v.vol;
+    $('iv-price').value = v.price;
+    schedule();
+  }
+  $('ex-atm').addEventListener('click', () => setPricer({ type: 'C', S: 100, K: 100, days: 90, r: 4.12, vol: 25, price: 5.45 }));
+  $('ex-otm').addEventListener('click', () => setPricer({ type: 'C', S: 754.37, K: 768, days: 8, r: 4.122, vol: 12, price: 1.345 }));
+
+  inputs.forEach((i) => i.addEventListener('input', schedule));
+  $('t-call').addEventListener('change', schedule);
+  $('t-put').addEventListener('change', schedule);
+  $('iv-price').addEventListener('input', schedule);
+  ['pricer-form', 'iv-form'].forEach((id) => $(id).addEventListener('submit', (e) => e.preventDefault()));
+
+  // ── DATA ─────────────────────────────────────────────────────────────
+  const C = {}; D.columns.forEach((c, i) => { C[c] = i; });
+  const rows = D.rows;
+  const solved = rows.filter((r) => r[C.engine_iv] !== null);
+  const tickers = [...new Set(rows.map((r) => r[C.ticker]))];
+  const fmtDate = (s) => new Date(s + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  const sorted = (a) => a.slice().sort((x, y) => x - y);
+  const quant = (a, q) => { const s = sorted(a); return s[Math.floor(q * (s.length - 1))]; };
+
+  // ── SMILE ────────────────────────────────────────────────────────────
+  let smileTicker = tickers[0];
+  function renderChips(box, current, onPick, extra) {
+    box.innerHTML = '';
+    (extra || []).concat(tickers).forEach((t) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.textContent = t; b.setAttribute('aria-pressed', String(t === current));
+      b.addEventListener('click', () => onPick(t));
+      box.appendChild(b);
+    });
+  }
+  function renderSmile() {
+    renderChips($('ticker-chips'), smileTicker, (t) => { smileTicker = t; renderSmile(); });
+    const mine = solved.filter((r) => r[C.ticker] === smileTicker);
+    const S = mine[0][C.S];
+    const exps = [...new Set(mine.map((r) => r[C.expiry]))].sort();
+    const ramp = ['--seq-1', '--seq-2', '--seq-3', '--seq-4', '--seq-5', '--seq-6'];
+    const offset = Math.max(0, ramp.length - exps.length);
+    const series = exps.map((ex, i) => {
+      const pts = mine.filter((r) => r[C.expiry] === ex)
+        .filter((r) => (r[C.type] === 'C' ? r[C.K] >= S : r[C.K] < S))
+        .map((r) => ({ x: r[C.K] / S, y: r[C.engine_iv] * 100, r }))
+        .sort((a, b) => a.x - b.x);
+      return { name: ex, days: Math.round(mine.find((r) => r[C.expiry] === ex)[C.T] * 365), color: css(ramp[Math.min(ramp.length - 1, i + offset)]), pts };
+    }).filter((s) => s.pts.length > 1);
+    const all = series.flatMap((s) => s.pts);
+    const xlo = Math.min(...all.map((p) => p.x)), xhi = Math.max(...all.map((p) => p.x));
+    const ylo = Math.min(...all.map((p) => p.y)), yhi = Math.max(...all.map((p) => p.y));
+    const ypad = (yhi - ylo) * 0.08;
+    $('smile-title').textContent = `${smileTicker}, spot $${S.toFixed(2)}`;
+    $('smile-sub').textContent = `${all.length} out-of-the-money contracts across ${series.length} expiries`;
+    const f = frame($('chart-smile'), {
+      label: `${smileTicker} implied volatility smile`, width: 1100, height: 380,
+      x: [xlo - 0.005, xhi + 0.005], y: [Math.max(0, ylo - ypad), yhi + ypad], margin: { l: 56, r: 24 },
+      xLabel: 'Strike / spot', yLabel: 'Implied vol (%)', xFmt: (v) => v.toFixed(2), yFmt: (v) => v.toFixed(0),
+    });
+    el('line', { x1: f.x(1), x2: f.x(1), y1: f.m.t, y2: f.H - f.m.b, stroke: css('--axis'), 'stroke-dasharray': '3 4' }, f.svg);
+    const atm = el('text', { x: f.x(1) + 6, y: f.m.t + 12, class: 'xlab' }, f.svg); atm.textContent = 'spot';
+    series.forEach((s) => {
+      el('path', { d: path(s.pts.map((p) => [p.x, p.y]), f), fill: 'none', stroke: s.color, 'stroke-width': 2, 'stroke-linejoin': 'round' }, f.svg);
+    });
+    const ring = el('circle', { r: 5, fill: 'none', stroke: css('--ink'), 'stroke-width': 2, visibility: 'hidden' }, f.svg);
+    const tip = tooltip($('chart-smile'));
+    const hit = el('rect', { x: f.m.l, y: f.m.t, width: f.W - f.m.l - f.m.r, height: f.H - f.m.t - f.m.b, fill: 'transparent' }, f.svg);
+    function move(ev) {
+      const pt = svgPoint(f.svg, ev);
+      let best = null, bd = Infinity;
+      series.forEach((s) => s.pts.forEach((p) => {
+        const d = Math.hypot(f.x(p.x) - pt.x, f.y(p.y) - pt.y);
+        if (d < bd) { bd = d; best = { s, p }; }
+      }));
+      if (!best || bd > 40) { ring.setAttribute('visibility', 'hidden'); tip.hide(); return; }
+      const r = best.p.r;
+      ring.setAttribute('cx', f.x(best.p.x)); ring.setAttribute('cy', f.y(best.p.y)); ring.setAttribute('visibility', 'visible');
+      tip.show(`<div class="t"><i style="background:${best.s.color}"></i>${fmtDate(best.s.name)} ${r[C.type] === 'C' ? 'call' : 'put'} ${r[C.K]}</div>
+        <div class="r"><span>Implied vol</span><span>${pct(r[C.engine_iv], 2)}</span></div>
+        <div class="r"><span>Bid / ask</span><span>${r[C.bid].toFixed(2)} / ${r[C.ask].toFixed(2)}</span></div>
+        <div class="r"><span>Days</span><span>${best.s.days}</span></div>`, pt.px, pt.py);
+    }
+    hit.addEventListener('pointermove', move);
+    hit.addEventListener('pointerdown', move);
+    hit.addEventListener('pointerleave', () => { ring.setAttribute('visibility', 'hidden'); tip.hide(); });
+    $('smile-legend').innerHTML = series.map((s) => `<span><i style="background:${s.color}"></i>${fmtDate(s.name)} · ${s.days}d</span>`).join('');
+  }
+
+  // ── VALIDATION ───────────────────────────────────────────────────────
+  function renderValidation() {
+    $('data-label').innerHTML = `<b>${D.label}.</b> Quotes from Yahoo Finance. Generated ${D.generated.replace('T', ' ')}.`;
+    const te = new Set(solved.map((r) => r[C.ticker] + '|' + r[C.expiry]));
+    const tes = new Set(solved.map((r) => r[C.ticker] + '|' + r[C.expiry] + '|' + r[C.K]));
+    const days = solved.map((r) => Math.round(r[C.T] * 365));
+    $('t-contracts').textContent = int(solved.length);
+    $('t-contracts-s').textContent = `of ${int(rows.length)} fetched; ${rows.length - solved.length} quotes broke no-arbitrage bounds`;
+    $('t-tickers').textContent = new Set(solved.map((r) => r[C.ticker])).size;
+    $('t-tickers-s').textContent = tickers.join(', ');
+    $('t-exp').textContent = te.size;
+    $('t-exp-s').textContent = `${Math.min(...days)} to ${Math.max(...days)} days to expiry`;
+    $('t-strikes').textContent = int(tes.size);
+
+    const pd = solved.map((r) => r[C.price_diff_vs_vollib]);
+    const idf = solved.map((r) => r[C.iv_diff_vs_vollib]).filter((v) => v !== null);
+    const pmax = Math.max(...pd);
+    $('c-max').textContent = '≤ ' + sci(Math.pow(10, Math.ceil(Math.log10(pmax))), 0);
+    $('c-max2').textContent = sci(pmax, 2);
+    $('c-p99').textContent = sci(quant(pd, 0.99), 2);
+    $('c-med').textContent = sci(quant(pd, 0.5), 2);
+    const imax = Math.max(...idf);
+    $('c-ivmax').textContent = '≤ ' + sci(Math.pow(10, Math.ceil(Math.log10(imax))), 0);
+    $('c-ivmax2').textContent = sci(imax, 2);
+    $('c-ivmed').textContent = sci(quant(idf, 0.5), 2);
+    $('c-ivn').textContent = int(idf.length);
+    const ps = D.parity_suite;
+    if (ps) {
+      $('c-tests').textContent = `${ps.passed} / ${ps.passed + ps.failed} pass`;
+      $('c-pcases').textContent = ps.parity_cases;
+      $('c-ptol').textContent = sci(ps.parity_tol, 0);
+    }
+
+    // agreement histogram (log10 bins)
+    const b0 = -12, b1 = -5, w = 0.25, nb = Math.round((b1 - b0) / w);
+    const bins = new Array(nb).fill(0);
+    pd.forEach((v) => {
+      const k = Math.floor((Math.log10(Math.max(v, 1e-16)) - b0) / w);
+      bins[Math.max(0, Math.min(nb - 1, k))]++;
+    });
+    const ymax = Math.max(...bins);
+    const f = frame($('chart-agree'), {
+      label: 'Histogram of price disagreement', x: [b0, b1], y: [0, ymax * 1.1], xLabel: '|engine − py_vollib| ($)', yLabel: 'Contracts',
+      xTicks: [-12, -11, -10, -9, -8, -7, -6, -5], xFmt: (v) => '1e' + v, yFmt: (v) => v.toFixed(0),
+    });
+    const tip = tooltip($('chart-agree'));
+    bins.forEach((c, k) => {
+      if (!c) return;
+      const x0 = f.x(b0 + k * w) + 1, x1 = f.x(b0 + (k + 1) * w) - 1;
+      const yTop = f.y(c), yBase = f.y(0);
+      const r = Math.min(4, (x1 - x0) / 2, yBase - yTop);
+      const d = `M${x0},${yBase}V${yTop + r}Q${x0},${yTop} ${x0 + r},${yTop}H${x1 - r}Q${x1},${yTop} ${x1},${yTop + r}V${yBase}Z`;
+      el('path', { d, fill: css('--s1') }, f.svg);
+      const hit = el('rect', { x: x0 - 1, y: f.m.t, width: x1 - x0 + 2, height: yBase - f.m.t, fill: 'transparent' }, f.svg);
+      const show = (ev) => { const pt = svgPoint(f.svg, ev); tip.show(`<div class="t">${sci(Math.pow(10, b0 + k * w), 1)} to ${sci(Math.pow(10, b0 + (k + 1) * w), 1)}</div><div class="r"><span>Contracts</span><span>${c}</span></div>`, pt.px, pt.py); };
+      hit.addEventListener('pointermove', show); hit.addEventListener('pointerdown', show);
+      hit.addEventListener('pointerleave', () => tip.hide());
+    });
+    const tx = f.x(-6);
+    el('line', { x1: tx, x2: tx, y1: f.m.t, y2: f.H - f.m.b, stroke: css('--warn'), 'stroke-width': 1.5, 'stroke-dasharray': '4 3' }, f.svg);
+    const tl = el('text', { x: tx - 6, y: f.m.t + 12, 'text-anchor': 'end', class: 'xlab' }, f.svg); tl.textContent = 'investigate above 1e-6';
+
+    renderContracts('All');
+  }
+
+  // iteration study: live, in browser
+  const SEEDS = [
+    { key: 'engine', name: 'Brenner-Subrahmanyam (default)', color: '--s1', opts: () => undefined },
+    { key: 'naive', name: 'Flat 0.3', color: '--s2', opts: () => ({ seed: 0.3 }) },
+    { key: 'cm', name: 'Corrado-Miller', color: '--s3', opts: (r) => ({ seed: E.corradoMiller(r[C.mid], r[C.S], r[C.K], r[C.T], r[C.r]) }) },
+  ];
+  function runStudy() {
+    const t0 = performance.now();
+    const out = SEEDS.map(() => ({ iters: [], fail: 0 }));
+    let n = 0;
+    for (const r of rows) {
+      const args = [r[C.mid], r[C.S], r[C.K], r[C.T], r[C.r], r[C.type]];
+      try { E.impliedVol(...args); } catch (_) { continue; }   // quote breaks no-arbitrage bounds
+      n++;
+      SEEDS.forEach((s, i) => {
+        const res = E.impliedVol(...args, s.opts(r));
+        if (res.converged) out[i].iters.push(res.iterations); else out[i].fail++;
+      });
+    }
+    const ms = performance.now() - t0;
+    $('study-sub').textContent = `${int(n * SEEDS.length)} solves re-run in your browser in ${ms.toFixed(0)} ms`;
+    $('study-body').innerHTML = out.map((o, i) => {
+      const a = o.iters, mean = a.reduce((x, y) => x + y, 0) / a.length;
+      const under = a.filter((v) => v < 5).length / a.length;
+      return `<tr><td><span class="swatch" style="background:${css(SEEDS[i].color)}"></span>${SEEDS[i].name}</td><td class="r">${int(a.length)} / ${int(a.length + o.fail)}</td><td class="r">${quant(a, 0.5)}</td><td class="r">${quant(a, 0.95)}</td><td class="r">${Math.max(...a)}</td><td class="r">${mean.toFixed(2)}</td><td class="r">${pct(under, 0)}</td></tr>`;
+    }).join('');
+
+    // grouped bars: iterations 1..max
+    const maxIt = Math.max(...out.flatMap((o) => o.iters));
+    const counts = out.map((o) => { const c = new Array(maxIt + 1).fill(0); o.iters.forEach((v) => c[v]++); return c; });
+    const ymax = Math.max(...counts.flat());
+    const f = frame($('chart-iters'), {
+      label: 'Iterations histogram by starting guess', x: [1.5, maxIt + 0.5], y: [0, ymax * 1.1],
+      xTicks: Array.from({ length: maxIt - 1 }, (_, i) => i + 2), xLabel: 'Evaluations to converge', yLabel: 'Contracts', yFmt: (v) => v.toFixed(0),
+    });
+    const tip = tooltip($('chart-iters'));
+    const slot = (f.x(2) - f.x(1)) * 0.8, bw = slot / SEEDS.length;
+    for (let it = 2; it <= maxIt; it++) {
+      const cx = f.x(it);
+      SEEDS.forEach((s, i) => {
+        const c = counts[i][it]; if (!c) return;
+        const x0 = cx - slot / 2 + i * bw + 1, x1 = x0 + bw - 2, yTop = f.y(c), yBase = f.y(0);
+        const r = Math.min(3, (x1 - x0) / 2, yBase - yTop);
+        el('path', { d: `M${x0},${yBase}V${yTop + r}Q${x0},${yTop} ${x0 + r},${yTop}H${x1 - r}Q${x1},${yTop} ${x1},${yTop + r}V${yBase}Z`, fill: css(s.color) }, f.svg);
+      });
+      const hit = el('rect', { x: cx - slot / 2, y: f.m.t, width: slot, height: f.y(0) - f.m.t, fill: 'transparent' }, f.svg);
+      const show = (ev) => {
+        const pt = svgPoint(f.svg, ev);
+        tip.show(`<div class="t">${it} evaluations</div>` + SEEDS.map((s, i) => `<div class="r"><span><i style="background:${css(s.color)}"></i>${s.name.replace(' (default)', '')}</span><span>${counts[i][it]}</span></div>`).join(''), pt.px, pt.py);
+      };
+      hit.addEventListener('pointermove', show); hit.addEventListener('pointerdown', show);
+      hit.addEventListener('pointerleave', () => tip.hide());
+    }
+    $('iters-legend').innerHTML = SEEDS.map((s) => `<span><i style="background:${css(s.color)}"></i>${s.name}</span>`).join('');
+  }
+  $('rerun').addEventListener('click', runStudy);
+
+  let tableTicker = 'All';
+  function renderContracts(t) {
+    tableTicker = t;
+    renderChips($('table-chips'), tableTicker, renderContracts, ['All']);
+    const list = rows.filter((r) => t === 'All' || r[C.ticker] === t);
+    $('contracts-body').innerHTML = list.map((r) => {
+      const iv = r[C.engine_iv], d = r[C.price_diff_vs_vollib];
+      return `<tr><td class="l">${r[C.ticker]}</td><td class="l">${r[C.expiry]}</td><td class="l">${r[C.type] === 'C' ? 'Call' : 'Put'}</td><td class="r">${r[C.S].toFixed(2)}</td><td class="r">${r[C.K]}</td><td class="r">${r[C.bid].toFixed(2)}</td><td class="r">${r[C.ask].toFixed(2)}</td><td class="r">${r[C.mid].toFixed(3)}</td><td class="r">${iv === null ? 'rejected' : pct(iv, 2)}</td><td class="r">${d === null ? '–' : sci(d, 2)}</td></tr>`;
+    }).join('');
+  }
+
+  // ── boot ─────────────────────────────────────────────────────────────
+  function renderAll() { renderPricer(); renderSolver(); renderSmile(); renderValidation(); runStudy(); }
+  renderAll();
+  // Colors come from CSS tokens; redraw when the theme flips.
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mq.addEventListener) mq.addEventListener('change', renderAll);
+  new MutationObserver(renderAll).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+})();
+</script>

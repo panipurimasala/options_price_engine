@@ -7,7 +7,8 @@
 
 namespace bs {
 
-    // This function implements corrado_miller approximation for initial guess of IV instead of using Brenner-Subrahmanyam approximation. 
+    // Corrado-Miller approximation for the initial IV guess. Used as a fallback
+    // when the primary Brenner-Subrahmanyam guess (in impliedVol) is out of range.
     double corrado_miller_approximation(double marketPrice, double S, double K, double T, double r) {
     
         //1. Calculate the discount factor (d)
@@ -87,7 +88,21 @@ IVResult impliedVol(double marketPrice,
         sigma = corrado_miller_approximation(marketPrice, S, K, T, r);
     }
 
-    // ── Newton-Raphson loop ───────────────────────────────────────────────
+    // ── Safeguarded (bracketed) Newton-Raphson loop ───────────────────────
+    // BS price is strictly increasing in sigma, so every evaluation tells us
+    // which side of the true IV we are on. We keep a bracket [lo, hi] that
+    // always contains the root and shrink it each iteration.
+    //
+    // Why: an ATM-style seed is far too low for OTM options (e.g. 0.03 when the
+    // true IV is 0.15). There price and vega are ~0, so the raw Newton step
+    // shoots to the upper bound, the next one crashes to the lower bound where
+    // vega underflows, and plain NR gives up. With the bracket, any Newton step
+    // that would leave [lo, hi] (or a near-zero vega) is replaced by a
+    // bisection step, which always makes progress. When Newton behaves, the
+    // path is identical to plain NR, so quadratic convergence is kept.
+    double lo = 0.0;    // price(lo) <= market price  (sigma -> 0 limit)
+    double hi = 10.0;   // upper search bound for sigma
+
     for (int i = 0; i < max_iter; ++i) {
         BSResult res = blackScholes(S, K, T, r, sigma);
 
@@ -101,16 +116,17 @@ IVResult impliedVol(double marketPrice,
         if (std::abs(error) < tol)
             return { sigma, i + 1, true };
 
-        // Vega too small — near-zero means the update step explodes.
-        // This happens for deep OTM options close to expiry.
-        if (std::abs(vega) < 1e-10)
-            return { sigma, i + 1, false };
+        // Tighten the bracket: price too low -> root is above sigma, and vice versa.
+        if (error < 0.0) lo = sigma;
+        else             hi = sigma;
 
-        // Newton-Raphson update
-        sigma -= error / vega;
+        // Newton candidate; fall back to bisection if vega is ~0 or the step
+        // would leave the bracket.
+        double next = (std::abs(vega) > 1e-10) ? sigma - error / vega : lo - 1.0;
+        if (!(next > lo && next < hi))
+            next = 0.5 * (lo + hi);
 
-        // Keep sigma in valid range — NR can occasionally overshoot
-        sigma = std::clamp(sigma, 1e-4, 10.0);
+        sigma = next;
     }
 
     // Hit max iterations without converging
